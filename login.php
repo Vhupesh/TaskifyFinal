@@ -21,7 +21,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($email === '' || $password === '') {
             $error = "Please enter email and password.";
         } else {
-            $sql  = "SELECT id, name, email, password_hash, role FROM users WHERE email = ?";
+            //$sql  = "SELECT id, name, email, password_hash, role FROM users WHERE email = ?";
+            $sql  = "SELECT id, name, email, password_hash, role, status FROM users WHERE email = ?";
             $stmt = $conn->prepare($sql);
 
             if ($stmt) {
@@ -30,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $result = $stmt->get_result();
                 $user = $result->fetch_assoc();
 
-                if ($user && password_verify($password, $user['password_hash'])) {
+               /* if ($user && password_verify($password, $user['password_hash'])) {
                     // Login success
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['name']    = $user['name'];
@@ -40,12 +41,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($user['role'] === 'admin') {
                         header("Location: admin_dashboard.php");
                     } else {
-                        header("Location: index.html");
+                        header("Location: user_dashboard.php");
                     }
                     exit;
                 } else {
                     $error = "Invalid email or password.";
-                }
+                } */
+
+
+                    if ($user && password_verify($password, $user['password_hash'])) {
+
+    if ($user['status'] !== 'active') {
+        // Account disabled by admin
+        $error = "Your account has been disabled. Please contact the administrator.";
+    } else {
+        // Login success
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['name']    = $user['name'];
+        $_SESSION['email']   = $user['email'];
+        $_SESSION['role']    = $user['role'];
+
+        if ($user['role'] === 'admin') {
+            header("Location: admin_dashboard.php");
+        } else {
+            header("Location: user_dashboard.php");
+        }
+        exit;
+    }
+
+} else {
+    $error = "Invalid email or password.";
+}
+
+
 
                 $stmt->close();
             } else {
