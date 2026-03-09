@@ -7,10 +7,13 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // ============================================
-// TASK MANAGEMENT SYSTEM
+// TASK MANAGEMENT SYSTEM (DB-backed)
 // ============================================
+const TASKS_API_URL = 'tasks_api.php';
+
 let tasks = [];
 let currentFilter = 'all';
+let editingTaskId = null;
 
 function getTodayDate() {
     const today = new Date();
@@ -20,62 +23,161 @@ function getTodayDate() {
     return `${year}-${month}-${day}`;
 }
 
-function loadTasks() {
-    const saved = localStorage.getItem('taskify_tasks');
-    if (saved) {
-        tasks = JSON.parse(saved);
-        console.log('Loaded tasks:', tasks);
-    } else {
-        // Create demo tasks
-        tasks = [
-            {
-                id: Date.now() + 1,
-                title: "Review Q4 Marketing Strategy",
-                description: "Analyze campaign performance and plan next quarter",
-                priority: "high",
-                date: getTodayDate(),
-                tag: "work",
-                completed: false,
-                starred: true
-            },
-            {
-                id: Date.now() + 2,
-                title: "Update Project Documentation",
-                description: "Add API endpoints and usage examples",
-                priority: "medium",
-                date: getTodayDate(),
-                tag: "work",
-                completed: false,
-                starred: false
-            }
-        ];
-        saveTasks();
+// Load tasks from server (READ)
+async function loadTasks() {
+    try {
+        const response = await fetch(TASKS_API_URL + '?action=list', { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        const data = await response.json();
+        if (data.success) {
+            tasks = data.tasks || [];
+        } else {
+            console.error('Failed to load tasks:', data.message);
+            tasks = [];
+        }
+    } catch (error) {
+        console.error('Error loading tasks:', error);
+        tasks = [];
     }
+    updateUI();
 }
 
-function saveTasks() {
-    localStorage.setItem('taskify_tasks', JSON.stringify(tasks));
-    console.log('Tasks saved:', tasks);
-    updateUI();
+// Create task on server (CREATE)
+async function createTaskOnServer(taskData) {
+    try {
+        const formData = new FormData();
+        formData.append('action', 'create');
+        formData.append('title', taskData.title);
+        formData.append('description', taskData.description || '');
+        formData.append('priority', taskData.priority);
+        formData.append('date', taskData.date);
+        formData.append('tag', taskData.tag);
+
+        const response = await fetch(TASKS_API_URL, {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+        if (!data.success) {
+            alert('Failed to create task: ' + (data.message || 'Unknown error'));
+        } else {
+            alert('Task created successfully!');
+        }
+    } catch (error) {
+        console.error('Error creating task:', error);
+        alert('Error creating task. Please try again.');
+    }
+    await loadTasks();
+}
+
+// Update task on server (UPDATE)
+async function updateTaskOnServer(id, fields) {
+    try {
+        const formData = new FormData();
+        formData.append('action', 'update');
+        formData.append('id', id);
+
+        Object.keys(fields).forEach(key => {
+            formData.append(key, fields[key]);
+        });
+
+        const response = await fetch(TASKS_API_URL, {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+        if (!data.success) {
+            alert('Failed to update task: ' + (data.message || 'Unknown error'));
+        } else {
+            // Only show message for full edits (not for every checkbox/star click)
+            if (fields.title || fields.description || fields.date || fields.priority || fields.tag) {
+                alert('Task updated successfully!');
+            }
+        }
+    } catch (error) {
+        console.error('Error updating task:', error);
+        alert('Error updating task. Please try again.');
+    }
+    await loadTasks();
+}
+
+// Delete task on server (DELETE)
+async function deleteTaskOnServer(id) {
+    const confirmDelete = confirm('Are you sure you want to delete this task?');
+    if (!confirmDelete) return;
+
+    try {
+        const formData = new FormData();
+        formData.append('action', 'delete');
+        formData.append('id', id);
+
+        const response = await fetch(TASKS_API_URL, {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+        if (!data.success) {
+            alert('Failed to delete task: ' + (data.message || 'Unknown error'));
+        } else {
+            alert('Task deleted successfully.');
+        }
+    } catch (error) {
+        console.error('Error deleting task:', error);
+        alert('Error deleting task. Please try again.');
+    }
+    await loadTasks();
+}
+
+// Open modal in edit mode
+function openEditTask(task) {
+    const modal = document.getElementById('taskModal');
+    const taskForm = document.getElementById('taskForm');
+    const dateInput = document.getElementById('taskDate');
+
+    if (!modal || !taskForm || !task) return;
+
+    editingTaskId = task.id;
+
+    const titleInput = document.getElementById('taskTitle');
+    const descInput = document.getElementById('taskDescription');
+    const priorityInput = document.getElementById('taskPriority');
+    const tagInput = document.getElementById('taskTag');
+
+    if (titleInput) titleInput.value = task.title || '';
+    if (descInput) descInput.value = task.description || '';
+    if (priorityInput) priorityInput.value = task.priority || 'medium';
+    if (dateInput) dateInput.value = task.date || getTodayDate();
+    if (tagInput) tagInput.value = task.tag || 'work';
+
+    const modalTitle = modal.querySelector('.modal-header h2');
+    const primaryBtn = modal.querySelector('.btn-primary');
+    if (modalTitle) modalTitle.textContent = 'Edit Task';
+    if (primaryBtn) primaryBtn.textContent = 'Update Task';
+
+    modal.classList.add('active');
+    if (titleInput) titleInput.focus();
 }
 
 // ============================================
 // INITIALIZE APP
 // ============================================
 function initApp() {
-    loadTasks();
     setupUserProfile();
     setupHeader();
     setupSidebar();
     setupModal();
-    updateUI();
+    loadTasks(); // will call updateUI() when done
     console.log('App initialized!');
 }
 
 // ============================================
-// POMODORO TIMER
+// POMODORO TIMER (unchanged, uses localStorage)
 // ============================================
-
 let pomodoroInterval = null;
 let pomodoroSeconds = 25 * 60; // 25 minutes
 let isPomodorRunning = false;
@@ -95,7 +197,6 @@ function updatePomodoroDisplay() {
     const timerDisplay = document.getElementById('timerDisplay');
     if (timerDisplay) timerDisplay.textContent = display;
     
-    // Update count
     const countDisplay = document.getElementById('pomodoroCount');
     if (countDisplay) countDisplay.textContent = pomodoroCount;
 }
@@ -104,8 +205,10 @@ function startPomodoro() {
     if (isPomodorRunning) return;
     
     isPomodorRunning = true;
-    document.getElementById('startTimer').disabled = true;
-    document.getElementById('pauseTimer').disabled = false;
+    const startBtn = document.getElementById('startTimer');
+    const pauseBtn = document.getElementById('pauseTimer');
+    if (startBtn) startBtn.disabled = true;
+    if (pauseBtn) pauseBtn.disabled = false;
     
     pomodoroInterval = setInterval(() => {
         pomodoroSeconds--;
@@ -124,14 +227,17 @@ function startPomodoro() {
 function pausePomodoro() {
     isPomodorRunning = false;
     clearInterval(pomodoroInterval);
-    document.getElementById('startTimer').disabled = false;
-    document.getElementById('pauseTimer').disabled = true;
+    const startBtn = document.getElementById('startTimer');
+    const pauseBtn = document.getElementById('pauseTimer');
+    if (startBtn) startBtn.disabled = false;
+    if (pauseBtn) pauseBtn.disabled = true;
 }
 
 function resetPomodoro() {
     pausePomodoro();
-    const activeMode = document.querySelector('.mode-btn.active').dataset.mode;
-    pomodoroSeconds = pomodoroModes[activeMode];
+    const activeModeBtn = document.querySelector('.mode-btn.active');
+    const activeMode = activeModeBtn ? activeModeBtn.dataset.mode : 'focus';
+    pomodoroSeconds = pomodoroModes[activeMode] || pomodoroModes.focus;
     updatePomodoroDisplay();
 }
 
@@ -140,19 +246,20 @@ function stopPomodoro() {
     resetPomodoro();
 }
 
-// Pomodoro Modal
 const pomodoroCard = document.getElementById('pomodoroCard');
 const pomodoroModal = document.getElementById('pomodoroModal');
 const closePomodoroModal = document.getElementById('closePomodoroModal');
 
 if (pomodoroCard) {
     pomodoroCard.onclick = () => {
-        pomodoroModal.classList.add('active');
-        updatePomodoroDisplay();
+        if (pomodoroModal) {
+            pomodoroModal.classList.add('active');
+            updatePomodoroDisplay();
+        }
     };
 }
 
-if (closePomodoroModal) {
+if (closePomodoroModal && pomodoroModal) {
     closePomodoroModal.onclick = () => {
         pomodoroModal.classList.remove('active');
         pausePomodoro();
@@ -168,7 +275,6 @@ if (pomodoroModal) {
     };
 }
 
-// Timer controls
 const startTimer = document.getElementById('startTimer');
 const pauseTimer = document.getElementById('pauseTimer');
 const resetTimer = document.getElementById('resetTimer');
@@ -177,14 +283,13 @@ if (startTimer) startTimer.onclick = startPomodoro;
 if (pauseTimer) pauseTimer.onclick = pausePomodoro;
 if (resetTimer) resetTimer.onclick = resetPomodoro;
 
-// Mode buttons
 document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.onclick = function() {
         document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
         this.classList.add('active');
         
         const mode = this.dataset.mode;
-        pomodoroSeconds = pomodoroModes[mode];
+        pomodoroSeconds = pomodoroModes[mode] || pomodoroModes.focus;
         
         const labels = {
             focus: 'Focus Time',
@@ -193,20 +298,18 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
         };
         
         const timerLabel = document.getElementById('timerLabel');
-        if (timerLabel) timerLabel.textContent = labels[mode];
+        if (timerLabel) timerLabel.textContent = labels[mode] || 'Focus Time';
         
         pausePomodoro();
         updatePomodoroDisplay();
     };
 });
 
-// Initialize
 updatePomodoroDisplay();
 
 // ============================================
-// EXPORT TASKS
+// EXPORT TASKS (works with DB-loaded tasks)
 // ============================================
-
 function exportTasksAsJSON() {
     const dataStr = JSON.stringify(tasks, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -255,13 +358,12 @@ if (exportBtn) {
 }
 
 // ============================================
-// USER PROFILE
+// USER PROFILE (keeps using localStorage)
 // ============================================
 function setupUserProfile() {
     let userName = localStorage.getItem('userName');
     if (!userName) {
-        userName = prompt('Welcome! What is your name?') || 'User';
-        localStorage.setItem('userName', userName);
+        userName = 'User';
     }
     
     const profileBtn = document.getElementById('profileBtn');
@@ -303,15 +405,15 @@ function setupHeader() {
     const notifBtn = document.getElementById('notificationBtn');
     if (notifBtn) {
         notifBtn.onclick = function() {
-            const overdue = tasks.filter(t => !t.completed && t.date < getTodayDate()).length;
-            const today = tasks.filter(t => !t.completed && t.date === getTodayDate()).length;
+            const todayStr = getTodayDate();
+            const overdue = tasks.filter(t => !t.completed && t.date < todayStr).length;
+            const today = tasks.filter(t => !t.completed && t.date === todayStr).length;
             alert(`📋 ${today} tasks due today\n⚠️ ${overdue} overdue tasks`);
         };
     }
     
     const themeBtn = document.getElementById('themeBtn');
     if (themeBtn) {
-        // Check if dark mode was previously enabled
         if (localStorage.getItem('darkMode') === 'enabled') {
             document.body.classList.add('dark-mode');
         }
@@ -320,28 +422,22 @@ function setupHeader() {
             this.style.transform = 'rotate(180deg)';
             setTimeout(() => this.style.transform = 'rotate(0deg)', 300);
             
-            // Toggle dark mode
             document.body.classList.toggle('dark-mode');
             
-            // Save preference
             if (document.body.classList.contains('dark-mode')) {
                 localStorage.setItem('darkMode', 'enabled');
-                console.log('Dark mode enabled');
             } else {
                 localStorage.setItem('darkMode', 'disabled');
-                console.log('Light mode enabled');
             }
         };
     }
     
-    // Navigation links
     document.querySelectorAll('.nav-link').forEach(link => {
         link.onclick = function(e) {
             e.preventDefault();
             document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
             this.classList.add('active');
             
-            // Scroll to section
             const targetId = this.getAttribute('href');
             if (targetId && targetId !== '#') {
                 const targetElement = document.querySelector(targetId);
@@ -353,15 +449,16 @@ function setupHeader() {
     });
 }
 
+// ============================================
+// METRICS & STATS
+// ============================================
 function updateMetrics() {
     const today = getTodayDate();
     
-    // Tasks Today
     const todayTasks = tasks.filter(t => t.date === today && !t.completed).length;
     const metricTodayEl = document.getElementById('metricToday');
     if (metricTodayEl) metricTodayEl.textContent = todayTasks;
     
-    // Weekly Progress
     const weekStart = new Date();
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     weekStart.setHours(0, 0, 0, 0);
@@ -374,7 +471,6 @@ function updateMetrics() {
     const metricWeeklyEl = document.getElementById('metricWeekly');
     if (metricWeeklyEl) metricWeeklyEl.textContent = weekProgress + '%';
     
-    // Productivity (completed tasks in last 7 days)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const sevenDaysStr = sevenDaysAgo.toISOString().split('T')[0];
@@ -386,7 +482,6 @@ function updateMetrics() {
     const metricProductivityEl = document.getElementById('metricProductivity');
     if (metricProductivityEl) metricProductivityEl.textContent = productivity + '%';
     
-    // Streak (consecutive days with completed tasks)
     let streak = calculateStreak();
     const metricStreakEl = document.getElementById('metricStreak');
     if (metricStreakEl) metricStreakEl.textContent = streak + ' days';
@@ -446,7 +541,7 @@ function setupSidebar() {
 }
 
 // ============================================
-// MODAL
+// MODAL (CREATE / EDIT TASK)
 // ============================================
 function setupModal() {
     const modal = document.getElementById('taskModal');
@@ -455,55 +550,72 @@ function setupModal() {
     const cancelBtn = document.getElementById('cancelTask');
     const taskForm = document.getElementById('taskForm');
     const dateInput = document.getElementById('taskDate');
+    const modalTitle = modal ? modal.querySelector('.modal-header h2') : null;
+    const primaryBtn = modal ? modal.querySelector('.btn-primary') : null;
     
     if (!modal || !newTaskBtn || !taskForm) {
         console.error('Modal elements not found!');
         return;
     }
     
-    // Set today's date
     if (dateInput) dateInput.value = getTodayDate();
     
-    // Open modal
+    // Open modal in create mode
     newTaskBtn.onclick = function() {
-        console.log('Opening modal...');
+        editingTaskId = null;
+        taskForm.reset();
+        if (dateInput) dateInput.value = getTodayDate();
+        if (modalTitle) modalTitle.textContent = 'Create New Task';
+        if (primaryBtn) primaryBtn.textContent = 'Create Task';
         modal.classList.add('active');
-        document.getElementById('taskTitle').focus();
+        const titleInput = document.getElementById('taskTitle');
+        if (titleInput) titleInput.focus();
     };
     
     // Close modal
-    const closeModal = () => {
+    const closeModalFn = () => {
         modal.classList.remove('active');
         taskForm.reset();
         if (dateInput) dateInput.value = getTodayDate();
+        editingTaskId = null;
+        if (modalTitle) modalTitle.textContent = 'Create New Task';
+        if (primaryBtn) primaryBtn.textContent = 'Create Task';
     };
     
-    if (closeBtn) closeBtn.onclick = closeModal;
-    if (cancelBtn) cancelBtn.onclick = closeModal;
+    if (closeBtn) closeBtn.onclick = closeModalFn;
+    if (cancelBtn) cancelBtn.onclick = closeModalFn;
     modal.onclick = (e) => {
-        if (e.target === modal) closeModal();
+        if (e.target === modal) closeModalFn();
     };
     
-    // Submit form
+    // Submit form (create or update)
     taskForm.onsubmit = function(e) {
         e.preventDefault();
         
-        const newTask = {
-            id: Date.now(),
-            title: document.getElementById('taskTitle').value,
-            description: document.getElementById('taskDescription').value || '',
-            priority: document.getElementById('taskPriority').value,
-            date: document.getElementById('taskDate').value,
-            tag: document.getElementById('taskTag').value,
-            completed: false,
-            starred: false
-        };
+        const title = document.getElementById('taskTitle').value.trim();
+        const description = document.getElementById('taskDescription').value || '';
+        const priority = document.getElementById('taskPriority').value;
+        const date = document.getElementById('taskDate').value;
+        const tag = document.getElementById('taskTag').value;
         
-        console.log('Creating task:', newTask);
-        tasks.push(newTask);
-        saveTasks();
-        closeModal();
-        alert('✅ Task created successfully!');
+        if (!title) {
+            alert('Please enter a task title.');
+            return;
+        }
+        if (!date) {
+            alert('Please select a due date.');
+            return;
+        }
+
+        const taskData = { title, description, priority, date, tag };
+
+        if (editingTaskId) {
+            updateTaskOnServer(editingTaskId, taskData);
+        } else {
+            createTaskOnServer(taskData);
+        }
+        
+        closeModalFn();
     };
     
     // Filter dropdown
@@ -521,7 +633,6 @@ function setupModal() {
 // UPDATE UI
 // ============================================
 function updateUI() {
-    console.log('Updating UI...');
     updateStats();
     updateSidebarCounts();
     updateMetrics();
@@ -532,7 +643,6 @@ function updateUI() {
 function updateStats() {
     const today = getTodayDate();
     
-    // Today's tasks
     const todayTasks = tasks.filter(t => t.date === today && !t.completed);
     const todayCompleted = tasks.filter(t => t.date === today && t.completed);
     const todayTotal = todayTasks.length + todayCompleted.length;
@@ -546,12 +656,10 @@ function updateStats() {
     if (todayProgressEl) todayProgressEl.textContent = todayProgress + '%';
     if (todayBarEl) todayBarEl.style.width = todayProgress + '%';
     
-    // Overdue
     const overdue = tasks.filter(t => t.date < today && !t.completed);
     const overdueEl = document.getElementById('overdueCount');
     if (overdueEl) overdueEl.textContent = overdue.length;
     
-    // Completed
     const completed = tasks.filter(t => t.completed);
     const completedProgress = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
     
@@ -562,8 +670,6 @@ function updateStats() {
     if (completedCountEl) completedCountEl.textContent = completed.length;
     if (completedProgressEl) completedProgressEl.textContent = completedProgress + '%';
     if (completedBarEl) completedBarEl.style.width = completedProgress + '%';
-    
-    console.log('Stats updated:', { todayTasks: todayTasks.length, overdue: overdue.length, completed: completed.length });
 }
 
 function updateSidebarCounts() {
@@ -590,7 +696,6 @@ function renderTasks() {
     let filtered = [...tasks];
     const today = getTodayDate();
     
-    // Filter
     if (currentFilter === 'today') {
         filtered = tasks.filter(t => t.date === today);
     } else if (currentFilter === 'important') {
@@ -602,7 +707,6 @@ function renderTasks() {
         filtered = tasks.filter(t => t.tag === tag);
     }
     
-    // Sort
     filtered.sort((a, b) => {
         if (a.completed !== b.completed) return a.completed ? 1 : -1;
         return new Date(a.date) - new Date(b.date);
@@ -620,8 +724,11 @@ function renderTasks() {
         div.className = `task-item ${task.completed ? 'completed' : ''}`;
         
         const priorityClass = task.priority;
-        const date = new Date(task.date);
-        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const dateObj = new Date(task.date);
+        const dateStr = !isNaN(dateObj) 
+            ? dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : task.date;
+        const isStarred = !!task.starred;
         
         div.innerHTML = `
             <div class="task-checkbox">
@@ -650,35 +757,66 @@ function renderTasks() {
                     <span class="task-tag">${task.tag}</span>
                 </div>
             </div>
-            <button class="task-star">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="${task.starred ? '#f59e0b' : 'none'}" stroke="${task.starred ? '#f59e0b' : '#9ca3af'}" stroke-width="2">
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-                </svg>
-            </button>
+            <div class="task-actions">
+                <button class="task-edit" title="Edit task">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2">
+                        <path d="M12 20h9"></path>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
+                    </svg>
+                </button>
+                <button class="task-star" title="Mark as important">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="${isStarred ? '#f59e0b' : 'none'}" stroke="${isStarred ? '#f59e0b' : '#9ca3af'}" stroke-width="2">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                    </svg>
+                </button>
+                <button class="task-delete" title="Delete task">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6l-1 14H6L5 6"></path>
+                        <path d="M10 11v6"></path>
+                        <path d="M14 11v6"></path>
+                        <path d="M9 6V4h6v2"></path>
+                    </svg>
+                </button>
+            </div>
         `;
         
-        // Checkbox
-        const checkbox = div.querySelector('input');
-        checkbox.onchange = function() {
-            task.completed = this.checked;
-            saveTasks();
-        };
+        const checkbox = div.querySelector('.task-checkbox input');
+        if (checkbox) {
+            checkbox.onchange = function() {
+                const newCompleted = this.checked ? 1 : 0;
+                updateTaskOnServer(task.id, { completed: newCompleted });
+            };
+        }
         
-        // Star
-        const star = div.querySelector('.task-star');
-        star.onclick = function() {
-            task.starred = !task.starred;
-            saveTasks();
-        };
+        const starBtn = div.querySelector('.task-star');
+        if (starBtn) {
+            starBtn.onclick = function() {
+                const newStarred = task.starred ? 0 : 1;
+                updateTaskOnServer(task.id, { starred: newStarred });
+            };
+        }
+        
+        const deleteBtn = div.querySelector('.task-delete');
+        if (deleteBtn) {
+            deleteBtn.onclick = function() {
+                deleteTaskOnServer(task.id);
+            };
+        }
+        
+        const editBtn = div.querySelector('.task-edit');
+        if (editBtn) {
+            editBtn.onclick = function() {
+                openEditTask(task);
+            };
+        }
         
         taskList.appendChild(div);
     });
-    
-    console.log('Rendered', filtered.length, 'tasks');
 }
 
 // ============================================
-// CHARTS
+// CHARTS (unchanged, but now based on DB tasks)
 // ============================================
 let completionChart = null;
 let priorityChart = null;
@@ -726,7 +864,7 @@ function renderCompletionChart() {
                             fontSize: '14px',
                             fontWeight: 600,
                             color: '#6b7280',
-                            formatter: function (w) {
+                            formatter: function () {
                                 return tasks.length;
                             }
                         },
@@ -821,10 +959,9 @@ function renderPriorityChart() {
 }
 
 function renderWeeklyChart() {
-    // Get last 7 days
     const days = [];
-    const completed = [];
-    const created = [];
+    const completedArr = [];
+    const createdArr = [];
     
     for (let i = 6; i >= 0; i--) {
         const date = new Date();
@@ -842,19 +979,19 @@ function renderWeeklyChart() {
             t.date === dateStr
         ).length;
         
-        completed.push(completedCount);
-        created.push(createdCount);
+        completedArr.push(completedCount);
+        createdArr.push(createdCount);
     }
     
     const options = {
         series: [
             {
                 name: 'Tasks Created',
-                data: created
+                data: createdArr
             },
             {
                 name: 'Tasks Completed',
-                data: completed
+                data: completedArr
             }
         ],
         chart: {
